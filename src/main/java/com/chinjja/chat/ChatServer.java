@@ -101,7 +101,7 @@ public class ChatServer {
 		@Override
 		public void run() {
 			try {
-				while(true) {
+				while(!closing) {
 					int len = is.read(buffer);
 					if(len == -1) {
 						return;
@@ -213,6 +213,7 @@ public class ChatServer {
 		
 		private void disconnect(JsonObject json) throws IOException {
 			disconnect_time = new Date(json.get("date").getAsLong());
+			closing = true;
 			write(json, null);
 			println("disconnected " + disconnect_time);
 		}

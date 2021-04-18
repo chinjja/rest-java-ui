@@ -11,5 +11,8 @@ repositories {
 // In this section you declare the dependencies for your production and test code
 dependencies {
     compile 'com.google.code.gson:gson:2.8.5'
+    compile 'com.squareup.okhttp:okhttp:2.7.5'
+    compile 'io.reactivex.rxjava3:rxjava:3.0.10'
+    compile 'com.github.akarnokd:rxjava3-swing:3.0.0'
     testCompile 'junit:junit:4.12'
 }

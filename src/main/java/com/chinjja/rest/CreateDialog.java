@@ -21,9 +21,9 @@ public class CreateDialog extends JDialog {
 	private final Map<String, JTextField> inputs = new HashMap<>();
 	private final JPanel buttons = new JPanel();
 	private final JPanel properties = new JPanel();
-	private final JButton create = new JButton("Create");
+	private final JButton create = new JButton("OK");
 	private final JButton cancel = new JButton("Cancel");
-	public CreateDialog(App app) {
+	public CreateDialog(App app, ResponseJson init) {
 		getContentPane().setLayout(new BorderLayout(0, 0));
 		
 		getContentPane().add(buttons, BorderLayout.SOUTH);
@@ -33,7 +33,11 @@ public class CreateDialog extends JDialog {
 				for(Entry<String, JsonElement> entry : app.properties.entrySet()) {
 					body.addProperty(entry.getKey(), inputs.get(entry.getKey()).getText());
 				}
-				app.create(body).subscribe();
+				if(init == null) {
+					app.create(body).subscribe();
+				} else {
+					app.update(init, body).subscribe();
+				}
 				dispose();
 			}
 		});
@@ -55,6 +59,9 @@ public class CreateDialog extends JDialog {
 			JLabel title = new JLabel(obj.get("title").getAsString());
 			JTextField field = new JTextField();
 			field.setEnabled(!obj.get("readOnly").getAsBoolean());
+			if(init != null) {
+				field.setText(init.entity.getAsJsonObject().get(entry.getKey()).getAsString());
+			}
 			
 			JPanel row = new JPanel(new BorderLayout());
 			row.add(BorderLayout.WEST, title);

@@ -4,11 +4,14 @@ import java.awt.BorderLayout;
 import java.awt.Dialog.ModalityType;
 import java.awt.EventQueue;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import javax.swing.JButton;
 import javax.swing.JFrame;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.UIManager;
 import javax.swing.border.EmptyBorder;
@@ -30,6 +33,7 @@ import com.squareup.okhttp.Response;
 import com.squareup.okhttp.ResponseBody;
 
 import hu.akarnokd.rxjava3.swing.SwingSchedulers;
+import io.reactivex.rxjava3.core.Observable;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.awt.event.ActionListener;
@@ -47,6 +51,7 @@ public class App extends JFrame {
 	final HttpUrl baseUrl = new HttpUrl.Builder().scheme("http").host("localhost").port(8080).addPathSegment("api").addPathSegment("employees").build();
 	final OkHttpClient client = new OkHttpClient();
 	JsonObject properties;
+	JsonObject links;
 	static final JsonParser parser = new JsonParser();
 	static final Gson gson = new Gson();
 	private final EmployeeModel model = new EmployeeModel();
@@ -63,6 +68,7 @@ public class App extends JFrame {
 	private final JButton last = new JButton(">>");
 	private final JScrollPane scrollPane = new JScrollPane();
 	private final JTable table = new JTable(model);
+	private final JButton update = new JButton("Update");
 
 	/**
 	 * Launch the application.
@@ -95,7 +101,7 @@ public class App extends JFrame {
 		contentPane.add(panel, BorderLayout.NORTH);
 		btnNewButton.addActionListener(new ActionListener() {
 			public void actionPerformed(ActionEvent e) {
-				CreateDialog dlg = new CreateDialog(App.this);
+				CreateDialog dlg = new CreateDialog(App.this, null);
 				dlg.setModalityType(ModalityType.APPLICATION_MODAL);
 				dlg.pack();
 				dlg.setLocationRelativeTo(getRootPane());
@@ -112,6 +118,20 @@ public class App extends JFrame {
 				delete(model.get(row)).subscribe();
 			}
 		});
+		update.addActionListener(new ActionListener() {
+			public void actionPerformed(ActionEvent e) {
+				int row = table.getSelectedRow();
+				if(row == -1) return;
+				
+				CreateDialog dlg = new CreateDialog(App.this, model.get(row));
+				dlg.setModalityType(ModalityType.APPLICATION_MODAL);
+				dlg.pack();
+				dlg.setLocationRelativeTo(getRootPane());
+				dlg.setVisible(true);
+			}
+		});
+		
+		panel.add(update);
 		
 		panel.add(btnNewButton_1);
 		
@@ -175,65 +195,101 @@ public class App extends JFrame {
 		this.pageSize.setValue(pageSize);
 	}
 	
-	public Single<JsonElement> loadFromServer() {
-		return Single
-				.just(baseUrl.newBuilder().addQueryParameter("size", ""+getPageSize()).build())
-				.observeOn(Schedulers.io())
-				.flatMap(url -> bridge(client.newCall(new Request.Builder().get().url(url).build())))
-				.flatMap(x -> {
-					String profile = string(x, "_links", "profile", "href");
-					return bridge(client.newCall(new Request.Builder().get().url(profile).header("accept", "application/schema+json").build()))
-							.doOnSuccess(res -> properties = object(res, "properties"))
-							.map(res -> x);
-				})
-				.observeOn(SwingSchedulers.edt())
-				.doOnSuccess(x -> {
-					update(x.getAsJsonObject());
-				});
-	}
-	
-	public Single<JsonElement> navigate(String url) {
+	public Single<List<ResponseJson>> loadFromServer() {
 		return Single
 				.just(0)
 				.observeOn(Schedulers.io())
-				.flatMap(x -> bridge(client.newCall(new Request.Builder().get().url(url).build())))
-				.observeOn(SwingSchedulers.edt())
-				.doOnSuccess(x -> update(x.getAsJsonObject()));
+				.flatMap(x -> _loadFromServer())
+				.flatMap(res -> _response(res));
 	}
 	
-	public Single<JsonElement> create(JsonObject employee) {
-		RequestBody body = RequestBody.create(MediaType.parse("application/json"), employee.toString());
-		
+	private Single<ResponseJson> _loadFromServer() {
+		return Single
+				.just(baseUrl.newBuilder().addQueryParameter("size", ""+getPageSize()).build())
+				.flatMap(url -> bridge(client.newCall(new Request.Builder().get().url(url).build())))
+				.flatMap(resp -> Single
+					.just(href(resp.entity, "_links", "profile"))
+					.map(url -> new Request.Builder().get().url(url).header("accept", "application/schema+json").build())
+					.flatMap(req -> bridge(client.newCall(req)))
+					.doOnSuccess(schema -> properties = object(schema.entity, "properties"))
+					.map(schema -> resp))
+				.doOnSuccess(resp -> links = object(resp.entity, "_links"));
+	}
+	
+	public Single<List<ResponseJson>> navigate(String url) {
+		return Single
+				.just(url)
+				.observeOn(Schedulers.io())
+				.map(x -> new Request.Builder().get().url(x).build())
+				.flatMap(req -> bridge(client.newCall(req)))
+				.doOnSuccess(res -> links = object(res.entity, "_links"))
+				.flatMap(res -> _response(res));
+	}
+	
+	private Single<List<ResponseJson>> _response(ResponseJson response) {
+		return Single
+				.just(response)
+				.flatMap(resp -> Observable
+					.fromIterable(array(resp.entity, "_embedded", "employees"))
+					.map(x -> href(x, "_links", "self"))
+					.map(url -> new Request.Builder().get().url(url).build())
+					.concatMapEager(req -> bridge(client.newCall(req)).toObservable())
+					.toList()
+				)
+				.observeOn(SwingSchedulers.edt())
+				.doOnSuccess(x -> {
+					update(x);
+				});
+	}
+	
+	public Single<List<ResponseJson>> create(JsonObject data) {
+		RequestBody body = RequestBody.create(MediaType.parse("application/json"), data.toString());
 		return Single
 				.just(baseUrl)
 				.observeOn(Schedulers.io())
-				.flatMap(url -> bridge(client.newCall(new Request.Builder().post(body).url(url).build())))
-				.map(url -> baseUrl.newBuilder().addQueryParameter("size", ""+getPageSize()).build())
-				.flatMap(url -> bridge(client.newCall(new Request.Builder().get().url(url).build())))
+				.map(url -> new Request.Builder().post(body).url(url).build())
+				.flatMap(req -> bridge(client.newCall(req)))
+				.flatMap(x -> _loadFromServer())
 				.flatMap(x -> {
-					JsonElement last = element(x, "_links", "last");
-					if(last != null) {
-						return navigate(string(last, "href"));
+					if(links.has("last")) {
+						return navigate(href(links, "last"));
+					} else {
+						return _response(x);
 					}
-					return Single.just(x);
 				});
 	}
-
-	public Single<JsonElement> delete(JsonObject employee) {
+	
+	public Single<List<ResponseJson>> update(ResponseJson employee, JsonObject data) {
+		RequestBody body = RequestBody.create(MediaType.parse("application/json"), data.toString());
 		return Single
-				.just(string(employee, "_links", "self", "href"))
+				.just(href(employee.entity, "_links", "self"))
+				.observeOn(Schedulers.io())
+				.flatMap(url -> bridge(client.newCall(new Request.Builder().put(body).url(url).addHeader("if-match", employee.headers.get("etag")).build())))
+				.flatMap(res -> navigate(href(links, "self")));
+	}
+
+	public Single<List<ResponseJson>> delete(ResponseJson employee) {
+		return Single
+				.just(href(employee.entity, "_links", "self"))
 				.observeOn(Schedulers.io())
 				.flatMap(url -> bridge(client.newCall(new Request.Builder().delete().url(url).build())))
 				.flatMap(x -> loadFromServer());
 	}
 	
-	static Single<JsonElement> bridge(Call call) {
+	static Single<ResponseJson> bridge(Call call) {
 		return Single.create(s -> {
 			call.enqueue(new Callback() {
 				@Override
 				public void onResponse(Response response) throws IOException {
+					JsonElement entity;
 					try(ResponseBody body = response.body()) {
-						s.onSuccess(parser.parse(body.string()));
+						entity = parser.parse(body.string());
+					}
+					ResponseJson res = new ResponseJson(response.code(), response.headers(), entity);
+					if(response.isSuccessful()) {
+						s.onSuccess(res);
+					} else {
+						s.onError(new ResponseJsonException(res));
 					}
 				}
 				
@@ -245,15 +301,12 @@ public class App extends JFrame {
 		});
 	}
 	
-	public void update(JsonObject obj) {
-		JsonElement embedded = obj.get("_embedded");
-		JsonArray employees = array(embedded, "employees");
+	public void update(Iterable<ResponseJson> obj) {
 		model.clear();
-		for(int i = 0; i < employees.size(); i++) {
-			model.add(employees.get(i).getAsJsonObject());
+		for(ResponseJson item : obj) {
+			model.add(item);
 		}
 		
-		JsonObject links = (JsonObject)obj.get("_links");
 		HashMap<String, JButton> map = new HashMap<>();
 		map.put("first", first);
 		map.put("prev", prev);
@@ -264,7 +317,7 @@ public class App extends JFrame {
 			JButton btn = e.getValue();
 			if(links.has(key)) {
 				btn.setEnabled(true);
-				btn.setActionCommand(string(links.get(key), "href"));
+				btn.setActionCommand(href(links.get(key)));
 			} else {
 				btn.setEnabled(false);
 			}
@@ -278,6 +331,12 @@ public class App extends JFrame {
 		}
 		if(json == null) return null;
 		return json.getAsString();
+	}
+	
+	public static String href(JsonElement json, String...paths) {
+		json = element(json, paths);
+		if(json == null) return null;
+		return json.getAsJsonObject().get("href").getAsString();
 	}
 	
 	public static JsonElement element(JsonElement json, String...paths) {

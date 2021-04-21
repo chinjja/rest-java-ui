@@ -1,7 +1,8 @@
 package com.chinjja.rest;
 
 import com.google.gson.JsonElement;
-import com.squareup.okhttp.Headers;
+
+import okhttp3.Headers;
 
 public class ResponseJson {
 	public final int code;

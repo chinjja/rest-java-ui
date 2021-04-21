@@ -3,20 +3,30 @@ package com.chinjja.rest;
 import java.awt.BorderLayout;
 import java.awt.Dialog.ModalityType;
 import java.awt.EventQueue;
+import java.awt.GridLayout;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import javax.swing.JButton;
 import javax.swing.JFrame;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JSpinner;
+import javax.swing.JTable;
+import javax.swing.ListSelectionModel;
+import javax.swing.SpinnerNumberModel;
 import javax.swing.UIManager;
 import javax.swing.border.EmptyBorder;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
 import javax.swing.plaf.nimbus.NimbusLookAndFeel;
 
+import com.ejlchina.okhttps.OkHttps;
+import com.ejlchina.stomp.Stomp;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -36,16 +46,6 @@ import hu.akarnokd.rxjava3.swing.SwingSchedulers;
 import io.reactivex.rxjava3.core.Observable;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.schedulers.Schedulers;
-import java.awt.event.ActionListener;
-import java.awt.event.ActionEvent;
-import javax.swing.JSpinner;
-import javax.swing.SpinnerNumberModel;
-import javax.swing.event.ChangeListener;
-import javax.swing.event.ChangeEvent;
-import java.awt.GridLayout;
-import javax.swing.JScrollPane;
-import javax.swing.JTable;
-import javax.swing.ListSelectionModel;
 
 public class App extends JFrame {
 	final HttpUrl baseUrl = new HttpUrl.Builder().scheme("http").host("localhost").port(8080).addPathSegment("api").addPathSegment("employees").build();
@@ -185,6 +185,27 @@ public class App extends JFrame {
 		contentPane.add(pageSize, BorderLayout.SOUTH);
 		
 		loadFromServer().subscribe();
+		
+		Stomp stomp = Stomp.over(OkHttps.webSocket("ws://localhost:8080/payroll"));
+		stomp.connect();
+		
+		stomp
+		.topic("/newEmployee", msg -> {
+			_loadFromServer()
+			.flatMap(x -> {
+				if(links.has("last")) {
+					return navigate(href(links, "last"));
+				} else {
+					return _response(x);
+				}
+			}).subscribe();
+		})
+		.topic("/updateEmployee", msg -> {
+			navigate(href(links, "self")).subscribe();
+		})
+		.topic("/deleteEmployee", msg -> {
+			navigate(href(links, "self")).subscribe();
+		});
 	}
 	
 	public int getPageSize() {
@@ -242,38 +263,31 @@ public class App extends JFrame {
 				});
 	}
 	
-	public Single<List<ResponseJson>> create(JsonObject data) {
+	public Single<ResponseJson> create(JsonObject data) {
 		RequestBody body = RequestBody.create(MediaType.parse("application/json"), data.toString());
 		return Single
 				.just(baseUrl)
 				.observeOn(Schedulers.io())
 				.map(url -> new Request.Builder().post(body).url(url).build())
 				.flatMap(req -> bridge(client.newCall(req)))
-				.flatMap(x -> _loadFromServer())
-				.flatMap(x -> {
-					if(links.has("last")) {
-						return navigate(href(links, "last"));
-					} else {
-						return _response(x);
-					}
-				});
+				;
 	}
 	
-	public Single<List<ResponseJson>> update(ResponseJson employee, JsonObject data) {
+	public Single<ResponseJson> update(ResponseJson employee, JsonObject data) {
 		RequestBody body = RequestBody.create(MediaType.parse("application/json"), data.toString());
 		return Single
 				.just(href(employee.entity, "_links", "self"))
 				.observeOn(Schedulers.io())
 				.flatMap(url -> bridge(client.newCall(new Request.Builder().put(body).url(url).addHeader("if-match", employee.headers.get("etag")).build())))
-				.flatMap(res -> navigate(href(links, "self")));
+				;
 	}
 
-	public Single<List<ResponseJson>> delete(ResponseJson employee) {
+	public Single<ResponseJson> delete(ResponseJson employee) {
 		return Single
 				.just(href(employee.entity, "_links", "self"))
 				.observeOn(Schedulers.io())
 				.flatMap(url -> bridge(client.newCall(new Request.Builder().delete().url(url).build())))
-				.flatMap(x -> loadFromServer());
+				;
 	}
 	
 	static Single<ResponseJson> bridge(Call call) {

@@ -14,5 +14,8 @@ dependencies {
     compile 'com.squareup.okhttp:okhttp:2.7.5'
     compile 'io.reactivex.rxjava3:rxjava:3.0.10'
     compile 'com.github.akarnokd:rxjava3-swing:3.0.0'
+    //compile 'org.java-websocket:Java-WebSocket:1.5.2'
+    //implementation 'com.ejlchina:okhttps-stomp:2.4.1'
+    implementation 'com.ejlchina:okhttps-stomp:3.0.1'
     testCompile 'junit:junit:4.12'
 }
